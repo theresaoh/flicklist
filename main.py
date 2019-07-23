@@ -1,38 +1,9 @@
 from flask import Flask, request, redirect, render_template, session, flash
 from flask_sqlalchemy import SQLAlchemy
+import os
 import cgi
-
-app = Flask(__name__)
-app.config['DEBUG'] = True      # displays runtime errors in the browser, too
-app.config['SQLALCHEMY_DATABASE_URI'] = 'mysql+pymysql://flicklist:MyNewPass@localhost:8889/flicklist'
-app.config['SQLALCHEMY_ECHO'] = True
-
-db = SQLAlchemy(app)
-
-class User(db.Model):
-    id = db.Column(db.Integer, primary_key=True)
-    email = db.Column(db.String(120), unique=True)
-    password = db.Column(db.String(120))
-    
-    def __init__(self, email, password):
-        self.email = email
-        self.password = password
-
-    def __repr__(self):
-        return '<User %r>' % self.email
-
-class Movie(db.Model):
-    id = db.Column(db.Integer, primary_key=True)
-    name = db.Column(db.String(120))
-    watched = db.Column(db.Boolean)
-    rating = db.Column(db.String(20))
-
-    def __init__(self, name):
-        self.name = name
-        self.watched = False
-
-    def __repr__(self):
-        return '<Movie %r>' % self.name
+from models import User, Movie, add_user, rate_watched_movie, cross_off_movie, add_new_movie
+from app import app, db
 
 # a list of movie names that nobody should have to watch
 terrible_movies = [
@@ -47,7 +18,8 @@ def get_current_watchlist():
     return Movie.query.filter_by(watched=False).all()
 
 def get_watched_movies():
-    return Movie.query.filter_by(watched=True).all()
+    owner = User.query.filter_by(email=session['user']).first()
+    return Movie.query.filter_by(watched=True).filter_by(owner_id=owner.id).all()
 
 @app.route("/login", methods=['GET', 'POST'])
 def login():
@@ -82,9 +54,7 @@ def register():
         if password != verify:
             flash('passwords did not match')
             return redirect('/register')
-        user = User(email=email, password=password)
-        db.session.add(user)
-        db.session.commit()
+        user = add_user(email, password)
         session['user'] = user.email
         return redirect("/")
     else:
@@ -124,15 +94,15 @@ def rate_movie():
         return redirect("/?error=" + error)
 
     # if we didn't redirect by now, then all is well
-    movie.rating = rating
-    db.session.add(movie)
-    db.session.commit()
+    rate_watched_movie(movie, rating)
     return render_template('rating-confirmation.html', movie=movie, rating=rating)
 
 
 # Creates a new route called movie_ratings which handles a GET on /ratings
 @app.route("/ratings", methods=['GET'])
 def movie_ratings():
+    # owner = User.query.filter_by(email=session['user']).first()
+    # movies = Movie.query.filter_by(owner_id = owner.id).all()
     return render_template('ratings.html', movies = get_watched_movies())
 
 @app.route("/crossoff", methods=['POST'])
@@ -144,9 +114,7 @@ def crossoff_movie():
         return redirect("/?error=Attempt to watch a movie unknown to this database")
 
     # if we didn't redirect by now, then all is well
-    crossed_off_movie.watched = True
-    db.session.add(crossed_off_movie)
-    db.session.commit()
+    cross_off_movie(crossed_off_movie)
     return render_template('crossoff.html', crossed_off_movie=crossed_off_movie)
 
 @app.route("/add", methods=['POST'])
@@ -164,15 +132,15 @@ def add_movie():
         error = "Trust me, you don't want to add '{0}' to your Watchlist".format(new_movie_name)
         return redirect("/?error=" + error)
 
-    movie = Movie(new_movie_name)
-    db.session.add(movie)
-    db.session.commit()
-    return render_template('add-confirmation.html', movie=movie)
+    #add new movie to database
+    user = User.query.filter_by(email=session['user']).first()
+    add_new_movie(new_movie_name, user)
+    return render_template('add-confirmation.html', movie=new_movie_name)
 
 @app.route("/")
 def index():
     encoded_error = request.args.get("error")
-    return render_template('edit.html', watchlist=get_current_watchlist(), error=encoded_error and cgi.escape(encoded_error, quote=True))
+    return render_template('edit.html', watchlist=get_current_watchlist(), error=encoded_error)
 
 
 endpoints_without_login = ['login', 'register']
